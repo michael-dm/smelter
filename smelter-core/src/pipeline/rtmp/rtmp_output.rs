@@ -264,11 +264,14 @@ fn run_ffmpeg_output_thread(
 ) {
     let mut received_video_eos = video_stream.as_ref().map(|_| false);
     let mut received_audio_eos = audio_stream.as_ref().map(|_| false);
+    let mut trailer_written = false;
 
     for packet in packets_receiver {
         match packet {
             EncodedOutputEvent::Data(chunk) => {
-                write_chunk(chunk, &video_stream, &audio_stream, &mut output_ctx);
+                if !trailer_written {
+                    write_chunk(chunk, &video_stream, &audio_stream, &mut output_ctx);
+                }
             }
             EncodedOutputEvent::VideoEOS => match received_video_eos {
                 Some(false) => received_video_eos = Some(true),
@@ -290,11 +293,14 @@ fn run_ffmpeg_output_thread(
             },
         };
 
-        if received_video_eos.unwrap_or(true) && received_audio_eos.unwrap_or(true) {
+        if !trailer_written
+            && received_video_eos.unwrap_or(true)
+            && received_audio_eos.unwrap_or(true)
+        {
             if let Err(err) = output_ctx.write_trailer() {
                 error!("Failed to write trailer to RTMP stream: {}.", err);
             };
-            break;
+            trailer_written = true;
         }
     }
 }

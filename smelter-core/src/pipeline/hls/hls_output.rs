@@ -282,19 +282,22 @@ fn run_ffmpeg_output_thread(
     let mut received_video_eos = video_stream.as_ref().map(|_| false);
     let mut received_audio_eos = audio_stream.as_ref().map(|_| false);
     let mut timestamp_offset = None;
+    let mut trailer_written = false;
 
     for packet in packets_receiver {
         match packet {
             EncodedOutputEvent::Data(chunk) => {
-                let timestamp_offset = *timestamp_offset.get_or_insert(chunk.pts);
-                write_chunk(
-                    chunk,
-                    &mut video_stream,
-                    &mut audio_stream,
-                    &mut output_ctx,
-                    framerate.get_interval_duration(),
-                    timestamp_offset,
-                );
+                if !trailer_written {
+                    let timestamp_offset = *timestamp_offset.get_or_insert(chunk.pts);
+                    write_chunk(
+                        chunk,
+                        &mut video_stream,
+                        &mut audio_stream,
+                        &mut output_ctx,
+                        framerate.get_interval_duration(),
+                        timestamp_offset,
+                    );
+                }
             }
             EncodedOutputEvent::VideoEOS => match received_video_eos {
                 Some(false) => received_video_eos = Some(true),
@@ -316,11 +319,14 @@ fn run_ffmpeg_output_thread(
             },
         };
 
-        if received_video_eos.unwrap_or(true) && received_audio_eos.unwrap_or(true) {
+        if !trailer_written
+            && received_video_eos.unwrap_or(true)
+            && received_audio_eos.unwrap_or(true)
+        {
             if let Err(err) = output_ctx.write_trailer() {
                 error!("Failed to write trailer to m3u8 file: {}.", err);
             };
-            break;
+            trailer_written = true;
         }
     }
 }

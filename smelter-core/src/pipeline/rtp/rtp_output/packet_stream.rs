@@ -15,42 +15,46 @@ impl Iterator for RtpBinaryPacketStream {
     type Item = Vec<bytes::Bytes>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if !self.waiting_video_eos && !self.waiting_audio_eos {
-            return None;
-        }
-        match self.receiver.recv() {
-            Ok(RtpOutputEvent::Data(packet)) => match packet.packet.marshal() {
-                Ok(data) => Some(vec![data]),
-                Err(err) => {
-                    error!("Failed to marshal an RTP packet: {}", err);
-                    Some(Vec::new())
-                }
-            },
-            Ok(RtpOutputEvent::AudioEos(packet)) => {
-                self.waiting_audio_eos = false;
-                match packet.marshal() {
-                    Ok(data) => Some(vec![data]),
-                    Err(err) => {
-                        error!("Failed to marshal an RTCP packet: {}", err);
-                        Some(Vec::new())
+        loop {
+            match self.receiver.recv() {
+                Ok(RtpOutputEvent::Data(packet)) => {
+                    if self.waiting_video_eos || self.waiting_audio_eos {
+                        return match packet.packet.marshal() {
+                            Ok(data) => Some(vec![data]),
+                            Err(err) => {
+                                error!("Failed to marshal an RTP packet: {}", err);
+                                Some(Vec::new())
+                            }
+                        };
                     }
+                    // After EOS, drain remaining data without allocating
                 }
-            }
-            Ok(RtpOutputEvent::VideoEos(packet)) => {
-                self.waiting_video_eos = false;
-                match packet.marshal() {
-                    Ok(data) => Some(vec![data]),
-                    Err(err) => {
-                        error!("Failed to marshal an RTCP packet: {}", err);
-                        Some(Vec::new())
-                    }
+                Ok(RtpOutputEvent::AudioEos(packet)) => {
+                    self.waiting_audio_eos = false;
+                    return match packet.marshal() {
+                        Ok(data) => Some(vec![data]),
+                        Err(err) => {
+                            error!("Failed to marshal an RTCP packet: {}", err);
+                            Some(Vec::new())
+                        }
+                    };
                 }
+                Ok(RtpOutputEvent::VideoEos(packet)) => {
+                    self.waiting_video_eos = false;
+                    return match packet.marshal() {
+                        Ok(data) => Some(vec![data]),
+                        Err(err) => {
+                            error!("Failed to marshal an RTCP packet: {}", err);
+                            Some(Vec::new())
+                        }
+                    };
+                }
+                Ok(RtpOutputEvent::Err(err)) => {
+                    error!("Failed to payload a packet: {}", err);
+                    return Some(Vec::new());
+                }
+                Err(_) => return None,
             }
-            Ok(RtpOutputEvent::Err(err)) => {
-                error!("Failed to payload a packet: {}", err);
-                Some(Vec::new())
-            }
-            Err(_) => None,
         }
     }
 }
